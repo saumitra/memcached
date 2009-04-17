@@ -8,11 +8,16 @@
 #include "memcached.h"
 
 bool safe_strtoull(const char *str, uint64_t *out) {
-    assert(out != NULL);
-    errno = 0;
-    *out = 0;
     char *endptr;
-    unsigned long long ull = strtoull(str, &endptr, 10);
+    unsigned long long ull;
+    assert(out != NULL);
+#ifndef WIN32
+    errno = 0;
+#else /* WIN32 */
+    _set_errno(0);
+#endif /* !WIN32 */
+    *out = 0;
+    ull = strtoull(str, &endptr, 10);
     if (errno == ERANGE)
         return false;
     if (isspace(*endptr) || (*endptr == '\0' && endptr != str)) {
@@ -31,11 +36,16 @@ bool safe_strtoull(const char *str, uint64_t *out) {
 }
 
 bool safe_strtoll(const char *str, int64_t *out) {
-    assert(out != NULL);
-    errno = 0;
-    *out = 0;
     char *endptr;
-    long long ll = strtoll(str, &endptr, 10);
+    long long ll;
+    assert(out != NULL);
+#ifndef WIN32
+    errno = 0;
+#else
+    _set_errno(0);
+#endif
+    *out = 0;
+    ll = strtoll(str, &endptr, 10);
     if (errno == ERANGE)
         return false;
     if (isspace(*endptr) || (*endptr == '\0' && endptr != str)) {
@@ -51,7 +61,11 @@ bool safe_strtoul(const char *str, uint32_t *out) {
     assert(out);
     assert(str);
     *out = 0;
+#ifndef WIN32
     errno = 0;
+#else
+    _set_errno(0);
+#endif
 
     l = strtoul(str, &endptr, 10);
     if (errno == ERANGE) {
@@ -75,11 +89,16 @@ bool safe_strtoul(const char *str, uint32_t *out) {
 }
 
 bool safe_strtol(const char *str, int32_t *out) {
-    assert(out != NULL);
-    errno = 0;
-    *out = 0;
     char *endptr;
-    long l = strtol(str, &endptr, 10);
+    long l;
+    assert(out != NULL);
+#ifndef WIN32
+    errno = 0;
+#else
+    _set_errno(0);
+#endif
+    *out = 0;
+    l = strtol(str, &endptr, 10);
     if (errno == ERANGE)
         return false;
     if (isspace(*endptr) || (*endptr == '\0' && endptr != str)) {

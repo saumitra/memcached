@@ -15,13 +15,14 @@
  */
 #include "memcached.h"
 #include <sys/stat.h>
+#include <ctype.h>
+#include <stdarg.h>
+#ifndef WIN32
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <signal.h>
 #include <sys/resource.h>
 #include <sys/uio.h>
-#include <ctype.h>
-#include <stdarg.h>
 
 /* some POSIX systems need the following definition
  * to get mlockall flags out of sys/mman.h.  */
@@ -38,6 +39,14 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <errno.h>
+#else /* !WIN32 */
+#include "win32/config.h"
+#include <Winsock2.h>
+#include <ws2tcpip.h>
+#include <process.h>
+#include "win32/ntservice.h"
+#include "win32/bsd_getopt.h"
+#endif /* WIN32 */
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -842,11 +851,13 @@ static void out_string(conn *c, const char *str) {
  * has been stored in c->cmd, and the item is ready in c->item.
  */
 static void complete_nread_ascii(conn *c) {
+    item *it;
+    int comm;
+    enum store_item_type ret;
     assert(c != NULL);
 
-    item *it = c->item;
-    int comm = c->cmd;
-    enum store_item_type ret;
+    it = c->item;
+    comm = c->cmd;
 
     pthread_mutex_lock(&c->thread->stats.mutex);
     c->thread->stats.slab_stats[it->slabs_clsid].set_cmds++;
@@ -1141,9 +1152,10 @@ static void complete_incr_bin(conn *c) {
 static void complete_update_bin(conn *c) {
     protocol_binary_response_status eno = PROTOCOL_BINARY_RESPONSE_EINVAL;
     enum store_item_type ret = NOT_STORED;
+    item *it;
     assert(c != NULL);
 
-    item *it = c->item;
+    it = c->item;
 
     pthread_mutex_lock(&c->thread->stats.mutex);
     c->thread->stats.slab_stats[it->slabs_clsid].set_cmds++;
@@ -1292,14 +1304,15 @@ static void append_bin_stats(const char *key, const uint16_t klen,
                              conn *c) {
     char *buf = c->stats.buffer + c->stats.offset;
     uint32_t bodylen = klen + vlen;
-    protocol_binary_response_header header = {
-        .response.magic = (uint8_t)PROTOCOL_BINARY_RES,
-        .response.opcode = PROTOCOL_BINARY_CMD_STAT,
-        .response.keylen = (uint16_t)htons(klen),
-        .response.datatype = (uint8_t)PROTOCOL_BINARY_RAW_BYTES,
-        .response.bodylen = htonl(bodylen),
-        .response.opaque = c->opaque
-    };
+    protocol_binary_response_header header;
+
+    memset(&header, 0, sizeof(header));
+    header.response.magic = (uint8_t)PROTOCOL_BINARY_RES;
+    header.response.opcode = PROTOCOL_BINARY_CMD_STAT;
+    header.response.keylen = (uint16_t)htons(klen);
+    header.response.datatype = (uint8_t)PROTOCOL_BINARY_RAW_BYTES;
+    header.response.bodylen = htonl(bodylen);
+    header.response.opaque = c->opaque;
 
     memcpy(buf, header.bytes, sizeof(header.response));
     buf += sizeof(header.response);
@@ -1367,12 +1380,13 @@ static void append_stats(const char *key, const uint16_t klen,
                   const char *val, const uint32_t vlen,
                   const void *cookie)
 {
+    conn *c;
     /* value without a key is invalid */
     if (klen == 0 && vlen > 0) {
         return ;
     }
 
-    conn *c = (conn*)cookie;
+    c = (conn*)cookie;
 
     if (c->protocol == binary_prot) {
         size_t needed = vlen + klen + sizeof(protocol_binary_response_header);
@@ -2132,14 +2146,12 @@ static void server_stats(ADD_STAT add_stats, conn *c) {
     rel_time_t now = current_time;
 
     struct thread_stats thread_stats;
-    threadlocal_stats_aggregate(&thread_stats);
     struct slab_stats slab_stats;
+    struct rusage usage;
+    threadlocal_stats_aggregate(&thread_stats);
     slab_stats_aggregate(&thread_stats, &slab_stats);
 
-#ifndef WIN32
-    struct rusage usage;
     getrusage(RUSAGE_SELF, &usage);
-#endif /* !WIN32 */
 
     STATS_LOCK();
 
@@ -2149,14 +2161,12 @@ static void server_stats(ADD_STAT add_stats, conn *c) {
     APPEND_STAT("version", "%s", VERSION);
     APPEND_STAT("pointer_size", "%d", (int)(8 * sizeof(void *)));
 
-#ifndef WIN32
     append_stat("rusage_user", add_stats, c, "%ld.%06ld",
                 (long)usage.ru_utime.tv_sec,
                 (long)usage.ru_utime.tv_usec);
     append_stat("rusage_system", add_stats, c, "%ld.%06ld",
                 (long)usage.ru_stime.tv_sec,
                 (long)usage.ru_stime.tv_usec);
-#endif /* !WIN32 */
 
     APPEND_STAT("curr_connections", "%u", stats.curr_conns - 1);
     APPEND_STAT("total_connections", "%u", stats.total_conns);
@@ -3003,7 +3013,7 @@ static enum try_read_result try_read_udp(conn *c) {
  */
 static enum try_read_result try_read_network(conn *c) {
     enum try_read_result gotdata = READ_NO_DATA_RECEIVED;
-    int res;
+    int res, avail;
 
     assert(c != NULL);
 
@@ -3028,7 +3038,7 @@ static enum try_read_result try_read_network(conn *c) {
             c->rsize *= 2;
         }
 
-        int avail = c->rsize - c->rbytes;
+        avail = c->rsize - c->rbytes;
         res = read(c->sfd, c->rbuf + c->rbytes, avail);
         if (res > 0) {
             pthread_mutex_lock(&c->thread->stats.mutex);
@@ -3056,9 +3066,11 @@ static enum try_read_result try_read_network(conn *c) {
 }
 
 static bool update_event(conn *c, const int new_flags) {
+    struct event_base *base;
+
     assert(c != NULL);
 
-    struct event_base *base = c->event.ev_base;
+    base = c->event.ev_base;
     if (c->ev_flags == new_flags)
         return true;
     if (event_del(&c->event) == -1) return false;
@@ -3627,6 +3639,7 @@ static int server_socket(const int port, enum protocol prot) {
     return success == 0;
 }
 
+#ifndef WIN32
 static int new_socket_unix(void) {
     int sfd;
     int flags;
@@ -3703,6 +3716,7 @@ static int server_socket_unix(const char *path, int access_mask) {
 
     return 0;
 }
+#endif /* WIN32 */
 
 /*
  * We keep the current time of day in a global variable that's updated by a
@@ -3724,9 +3738,11 @@ static void set_current_time(void) {
 }
 
 static void clock_handler(const int fd, const short which, void *arg) {
-    struct timeval t = {.tv_sec = 1, .tv_usec = 0};
+    struct timeval t;
     static bool initialized = false;
 
+    t.tv_sec = 1;
+    t.tv_usec = 0;
     if (initialized) {
         /* only delete the event if it's actually there. */
         evtimer_del(&clockevent);
@@ -3748,7 +3764,15 @@ static void usage(void) {
            "-s <file>     unix socket path to listen on (disables network support)\n"
            "-a <mask>     access mask for unix socket, in octal (default 0700)\n"
            "-l <ip_addr>  interface to listen on, default is INADDR_ANY\n"
+#ifndef WIN32
            "-d            run as a daemon\n"
+#else /* !WIN32 */
+           "-d start      tell memcached to start\n"
+           "-d restart    tell running memcached to do a graceful restart\n"
+           "-d stop/shutdown    tell running memcached to shutdown\n"
+           "-d install    install memcached service\n"
+           "-d unindstall uninstall memcached service\n"
+#endif /* WIN32 */
            "-r            maximize core file limit\n"
            "-u <username> assume identity of <username> (only when run as root)\n"
            "-m <num>      max memory to use for items in megabytes, default is 64 MB\n"
@@ -3890,11 +3914,32 @@ static void remove_pidfile(const char *pid_file) {
 
 }
 
+#ifdef WIN32
+void run_server() {
+    /* Enter the loop */
+    event_loop(0);
+}
+
+void stop_server() {
+    /* Exit the loop */
+    event_loopexit(NULL);
+}
+
+void pause_server() {
+    /* NOT IMPLEMENTED YET */
+}
+
+void continue_server() {
+    /* NOT IMPLEMENTED YET */
+}
+#endif /* WIN32 */
+
 static void sig_handler(const int sig) {
     printf("SIGINT handled.\n");
     exit(EXIT_SUCCESS);
 }
 
+#ifndef WIN32
 #ifndef HAVE_SIGIGNORE
 static int sigignore(int sig) {
     struct sigaction sa = { .sa_handler = SIG_IGN, .sa_flags = 0 };
@@ -3904,6 +3949,7 @@ static int sigignore(int sig) {
     }
     return 0;
 }
+#endif
 #endif
 
 
@@ -3951,21 +3997,40 @@ static int enable_large_pages(void) {
 int main (int argc, char **argv) {
     int c;
     bool lock_memory = false;
+#ifndef WIN32
     bool do_daemonize = false;
+#else /* !WIN32 */
+    int do_daemonize = 0;
+#endif /* WIN32 */
     bool preallocate = false;
     int maxcore = 0;
     char *username = NULL;
     char *pid_file = NULL;
-    struct passwd *pw;
-    struct rlimit rlim;
     /* listening sockets */
     static int *l_socket = NULL;
 
     /* udp socket */
     static int *u_socket = NULL;
 
+#ifndef WIN32
+    struct passwd *pw;
+    struct rlimit rlim;
+
     /* handle SIGINT */
     signal(SIGINT, sig_handler);
+#else /* !WIN32 */
+    extern int ptw32_processInitialize();
+    WSADATA wsaData;
+
+    if (WSAStartup(MAKEWORD(2,0), &wsaData) != 0) {
+        fprintf(stderr, "Socket Initialization Error. Program aborted\n");
+        return;
+    }
+    if (PTW32_TRUE != ptw32_processInitialize()) {
+        fprintf(stderr, "Pthread Library Initialization Error. Program aborted\n");
+        return;
+    }
+#endif /* WIN32 */
 
     /* init settings */
     settings_init();
@@ -3986,7 +4051,11 @@ int main (int argc, char **argv) {
           "hi"  /* help, licence info */
           "r"   /* maximize core file limit */
           "v"   /* verbose */
+#ifdef WIN32
+          "d:"  /* Windows Service subcommands */
+#else
           "d"   /* daemon mode */
+#endif
           "l:"  /* interface to listen on */
           "u:"  /* user identity to run as */
           "P:"  /* save PID in file */
@@ -4040,6 +4109,16 @@ int main (int argc, char **argv) {
             break;
         case 'd':
             do_daemonize = true;
+#ifdef WIN32
+            if (!optarg || !strcmpi(optarg, "runservice")) do_daemonize = 1;
+            else if (!strcmpi(optarg, "start")) do_daemonize = 2;
+            else if (!strcmpi(optarg, "restart")) do_daemonize = 3;
+            else if (!strcmpi(optarg, "stop")) do_daemonize = 4;
+            else if (!strcmpi(optarg, "shutdown")) do_daemonize = 5;
+            else if (!strcmpi(optarg, "install")) do_daemonize = 6;
+            else if (!strcmpi(optarg, "uninstall")) do_daemonize = 7;
+            else fprintf(stderr, "Illegal argument: \"%s\"\n", optarg);
+#endif /* WIN32 */
             break;
         case 'r':
             maxcore = 1;
@@ -4105,6 +4184,7 @@ int main (int argc, char **argv) {
         }
     }
 
+#ifndef WIN32
     if (maxcore != 0) {
         struct rlimit rlim_new;
         /*
@@ -4178,6 +4258,41 @@ int main (int argc, char **argv) {
             exit(EXIT_FAILURE);
         }
     }
+#else /* !WIN32 */
+    switch(do_daemonize) {
+        case 2:
+            if(!ServiceStart()) {
+                fprintf(stderr, "failed to start service\n");
+                return 1;
+            }
+            exit(0);
+        case 3:
+            if (!ServiceRestart()) {
+                fprintf(stderr,"failed to restart service\n");
+                return 1;
+            }
+            exit(0);
+        case 4:
+        case 5:
+            if (!ServiceStop()) {
+                fprintf(stderr, "failed to stop service\n");
+                return 1;
+            }
+            exit(0);
+        case 6:
+            if (!ServiceInstall()) {
+                fprintf(stderr, "failed to install service or service already installed\n");
+                return 1;
+            }
+            exit(0);
+        case 7:
+            if (!ServiceUninstall()) {
+                fprintf(stderr, "failed to uninstall service or service not installed\n");
+                return 1;
+            }
+            exit(0);
+        }
+#endif /* WIN32 */
 
     /* lock paged memory if needed */
     if (lock_memory) {
@@ -4204,6 +4319,7 @@ int main (int argc, char **argv) {
     suffix_init();
     slabs_init(settings.maxbytes, settings.factor, preallocate);
 
+#ifndef WIN32
     /*
      * ignore SIGPIPE signals; we can use errno == EPIPE if we
      * need that information
@@ -4212,6 +4328,7 @@ int main (int argc, char **argv) {
         perror("failed to ignore SIGPIPE; sigaction");
         exit(EX_OSERR);
     }
+#endif /* !WIN32 */
     /* start up worker threads if MT mode */
     thread_init(settings.num_threads, main_base);
     /* save the PID in if we're a daemon, do this after thread_init due to
@@ -4226,6 +4343,7 @@ int main (int argc, char **argv) {
     /* initialise clock event */
     clock_handler(0, 0, 0);
 
+#ifndef WIN32
     /* create unix mode sockets after dropping privileges */
     if (settings.socketpath != NULL) {
         errno = 0;
@@ -4237,11 +4355,16 @@ int main (int argc, char **argv) {
           exit(EX_OSERR);
         }
     }
+#endif /* !WIN32 */
 
     /* create the listening socket, bind it, and init */
     if (settings.socketpath == NULL) {
         int udp_port;
+#ifndef WIN32
         errno = 0;
+#else /* !WIN32 */
+    _set_errno(0);
+#endif /* WIN32 */
         if (settings.port && server_socket(settings.port, negotiating_prot)) {
             fprintf(stderr, "failed to listen on TCP port %d\n", settings.port);
             if (errno != 0)
@@ -4258,7 +4381,11 @@ int main (int argc, char **argv) {
         udp_port = settings.udpport ? settings.udpport : settings.port;
 
         /* create the UDP listening socket and bind it */
+#ifndef WIN32
         errno = 0;
+#else /* !WIN32 */
+    _set_errno(0);
+#endif /* WIN32 */
         if (settings.udpport && server_socket(settings.udpport, ascii_udp_prot)) {
             fprintf(stderr, "failed to listen on UDP port %d\n", settings.udpport);
             if (errno != 0)
@@ -4266,6 +4393,12 @@ int main (int argc, char **argv) {
             exit(EX_OSERR);
         }
     }
+#ifdef WIN32
+    if (do_daemonize) {
+        ServiceSetFunc(run_server, pause_server, continue_server, stop_server);
+        ServiceRun();
+    } else
+#endif /* WIN32 */
 
     /* Drop privileges no longer needed */
     drop_privileges();

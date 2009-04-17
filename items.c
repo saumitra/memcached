@@ -1,11 +1,12 @@
 /* -*- Mode: C; tab-width: 4; c-basic-offset: 4; indent-tabs-mode: nil -*- */
 #include "memcached.h"
-#include <sys/stat.h>
-#include <sys/socket.h>
+#ifndef WIN32
 #include <sys/signal.h>
 #include <sys/resource.h>
-#include <fcntl.h>
 #include <netinet/in.h>
+#endif
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -93,20 +94,21 @@ static size_t item_make_header(const uint8_t nkey, const int flags, const int nb
 /*@null@*/
 item *do_item_alloc(char *key, const size_t nkey, const int flags, const rel_time_t exptime, const int nbytes) {
     uint8_t nsuffix;
-    item *it = NULL;
+    item *search, *it = NULL;
     char suffix[40];
+    unsigned int id;
+    int tries;
     size_t ntotal = item_make_header(nkey + 1, flags, nbytes, suffix, &nsuffix);
     if (settings.use_cas) {
         ntotal += sizeof(uint64_t);
     }
 
-    unsigned int id = slabs_clsid(ntotal);
+    id = slabs_clsid(ntotal);
     if (id == 0)
         return 0;
 
     /* do a quick check if we have any expired items in the tail.. */
-    int tries = 50;
-    item *search;
+    tries = 50;
 
     for (search = tails[id];
          tries > 0 && search != NULL;

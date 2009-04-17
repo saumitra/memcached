@@ -288,10 +288,11 @@ void dispatch_conn_new(int sfd, enum conn_states init_state, int event_flags,
                        int read_buffer_size, enum protocol prot) {
     CQ_ITEM *item = cqi_new();
     int tid = last_thread % (settings.num_threads - 1);
+    LIBEVENT_THREAD *thread;
 
     /* Skip the dispatch thread (0) */
     tid++;
-    LIBEVENT_THREAD *thread = threads + tid;
+    thread = threads + tid;
 
     last_thread = tid;
 
@@ -313,7 +314,12 @@ void dispatch_conn_new(int sfd, enum conn_states init_state, int event_flags,
  * Returns true if this is the thread that listens for new TCP connections.
  */
 int is_listen_thread() {
+#ifdef WIN32
+    pthread_t tid = pthread_self();
+    return(tid.p == threads[0].thread_id.p && tid.x == threads[0].thread_id.x);
+#else
     return pthread_self() == threads[0].thread_id;
+#endif
 }
 
 /********************************* ITEM ACCESS *******************************/
@@ -573,6 +579,13 @@ void slab_stats_aggregate(struct thread_stats *stats, struct slab_stats *out) {
  */
 void thread_init(int nthreads, struct event_base *main_base) {
     int         i;
+#ifdef WIN32
+    struct sockaddr_in        serv_addr;
+    int                sockfd;
+
+    if ((sockfd = createLocalListSock(&serv_addr)) < 0)
+        exit(1);
+#endif
 
     pthread_mutex_init(&cache_lock, NULL);
     pthread_mutex_init(&stats_lock, NULL);
@@ -594,7 +607,11 @@ void thread_init(int nthreads, struct event_base *main_base) {
 
     for (i = 0; i < nthreads; i++) {
         int fds[2];
+#ifdef WIN32
+        if (createLocalSocketPair(sockfd,fds,&serv_addr) == -1) {
+#else
         if (pipe(fds)) {
+#endif
             perror("Can't create notify pipe");
             exit(1);
         }
@@ -604,6 +621,9 @@ void thread_init(int nthreads, struct event_base *main_base) {
 
         setup_thread(&threads[i]);
     }
+#ifdef WIN32
+    shutdown(sockfd,2);
+#endif
 
     /* Create threads after we've done all the libevent setup. */
     for (i = 1; i < nthreads; i++) {

@@ -12,18 +12,18 @@
  */
 
 #include "memcached.h"
-#include <sys/stat.h>
-#include <sys/socket.h>
+#ifndef WIN32
 #include <sys/signal.h>
 #include <sys/resource.h>
-#include <fcntl.h>
 #include <netinet/in.h>
+#endif
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
-#include <pthread.h>
 
 static pthread_cond_t maintenance_cond = PTHREAD_COND_INITIALIZER;
 
@@ -68,8 +68,9 @@ void assoc_init(void) {
 
 item *assoc_find(const char *key, const size_t nkey) {
     uint32_t hv = hash(key, nkey, 0);
-    item *it;
+    item *it, *ret;
     unsigned int oldbucket;
+    int depth;
 
     if (expanding &&
         (oldbucket = (hv & hashmask(hashpower - 1))) >= expand_bucket)
@@ -79,8 +80,8 @@ item *assoc_find(const char *key, const size_t nkey) {
         it = primary_hashtable[hv & hashmask(hashpower)];
     }
 
-    item *ret = NULL;
-    int depth = 0;
+    ret = NULL;
+    depth = 0;
     while (it) {
         if ((nkey == it->nkey) && (memcmp(key, ITEM_key(it), nkey) == 0)) {
             ret = it;

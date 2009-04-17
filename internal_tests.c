@@ -108,17 +108,21 @@ static void test_safe_strtol() {
 static void test_issue_44(void) {
     char pidfile[80];
     char buffer[256];
+    FILE *fp;
+    pid_t pid;
     sprintf(pidfile, "/tmp/memcached.%d", getpid());
     sprintf(buffer, "./memcached-debug -p 0 -P %s -d", pidfile);
     assert(system(buffer) == 0);
     sleep(1);
-    FILE *fp = fopen(pidfile, "r");
+    fp = fopen(pidfile, "r");
     assert(fp);
     assert(fgets(buffer, sizeof(buffer), fp));
     fclose(fp);
-    pid_t pid = atol(buffer);
+    pid = atol(buffer);
     assert(kill(pid, 0) == 0);
+#ifndef WIN32
     assert(kill(pid, SIGHUP) == 0);
+#endif
     sleep(1);
     assert(kill(pid, 0) == 0);
     assert(kill(pid, SIGTERM) == 0);
