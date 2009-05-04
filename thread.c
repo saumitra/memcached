@@ -288,11 +288,10 @@ void dispatch_conn_new(int sfd, enum conn_states init_state, int event_flags,
                        int read_buffer_size, enum protocol prot) {
     CQ_ITEM *item = cqi_new();
     int tid = last_thread % (settings.num_threads - 1);
-    LIBEVENT_THREAD *thread;
 
     /* Skip the dispatch thread (0) */
     tid++;
-    thread = threads + tid;
+    LIBEVENT_THREAD *thread = threads + tid;
 
     last_thread = tid;
 

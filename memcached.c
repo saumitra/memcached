@@ -851,13 +851,11 @@ static void out_string(conn *c, const char *str) {
  * has been stored in c->cmd, and the item is ready in c->item.
  */
 static void complete_nread_ascii(conn *c) {
-    item *it;
-    int comm;
-    enum store_item_type ret;
     assert(c != NULL);
 
-    it = c->item;
-    comm = c->cmd;
+    item *it = c->item;
+    int comm = c->cmd;
+    enum store_item_type ret;
 
     pthread_mutex_lock(&c->thread->stats.mutex);
     c->thread->stats.slab_stats[it->slabs_clsid].set_cmds++;
@@ -1152,10 +1150,9 @@ static void complete_incr_bin(conn *c) {
 static void complete_update_bin(conn *c) {
     protocol_binary_response_status eno = PROTOCOL_BINARY_RESPONSE_EINVAL;
     enum store_item_type ret = NOT_STORED;
-    item *it;
     assert(c != NULL);
 
-    it = c->item;
+    item *it = c->item;
 
     pthread_mutex_lock(&c->thread->stats.mutex);
     c->thread->stats.slab_stats[it->slabs_clsid].set_cmds++;
@@ -1304,15 +1301,14 @@ static void append_bin_stats(const char *key, const uint16_t klen,
                              conn *c) {
     char *buf = c->stats.buffer + c->stats.offset;
     uint32_t bodylen = klen + vlen;
-    protocol_binary_response_header header;
-
-    memset(&header, 0, sizeof(header));
-    header.response.magic = (uint8_t)PROTOCOL_BINARY_RES;
-    header.response.opcode = PROTOCOL_BINARY_CMD_STAT;
-    header.response.keylen = (uint16_t)htons(klen);
-    header.response.datatype = (uint8_t)PROTOCOL_BINARY_RAW_BYTES;
-    header.response.bodylen = htonl(bodylen);
-    header.response.opaque = c->opaque;
+    protocol_binary_response_header header = {
+        .response.magic = (uint8_t)PROTOCOL_BINARY_RES,
+        .response.opcode = PROTOCOL_BINARY_CMD_STAT,
+        .response.keylen = (uint16_t)htons(klen),
+        .response.datatype = (uint8_t)PROTOCOL_BINARY_RAW_BYTES,
+        .response.bodylen = htonl(bodylen),
+        .response.opaque = c->opaque
+    };
 
     memcpy(buf, header.bytes, sizeof(header.response));
     buf += sizeof(header.response);
@@ -1380,13 +1376,12 @@ static void append_stats(const char *key, const uint16_t klen,
                   const char *val, const uint32_t vlen,
                   const void *cookie)
 {
-    conn *c;
     /* value without a key is invalid */
     if (klen == 0 && vlen > 0) {
         return ;
     }
 
-    c = (conn*)cookie;
+    conn *c = (conn*)cookie;
 
     if (c->protocol == binary_prot) {
         size_t needed = vlen + klen + sizeof(protocol_binary_response_header);
@@ -2146,11 +2141,11 @@ static void server_stats(ADD_STAT add_stats, conn *c) {
     rel_time_t now = current_time;
 
     struct thread_stats thread_stats;
-    struct slab_stats slab_stats;
-    struct rusage usage;
     threadlocal_stats_aggregate(&thread_stats);
+    struct slab_stats slab_stats;
     slab_stats_aggregate(&thread_stats, &slab_stats);
 
+    struct rusage usage;
     getrusage(RUSAGE_SELF, &usage);
 
     STATS_LOCK();
@@ -2749,11 +2744,11 @@ static void process_command(conn *c, char *command) {
 
     } else if ((ntokens == 7 || ntokens == 8) && (strcmp(tokens[COMMAND_TOKEN].value, "cas") == 0 && (comm = NREAD_CAS))) {
 
-        process_update_command(c, tokens, ntokens, comm, true);
+        process_update_command(c, tokens, ntokens, comm, 1);
 
     } else if ((ntokens == 4 || ntokens == 5) && (strcmp(tokens[COMMAND_TOKEN].value, "incr") == 0)) {
 
-        process_arithmetic_command(c, tokens, ntokens, 1);
+        process_arithmetic_command(c, tokens, ntokens, true);
 
     } else if (ntokens >= 3 && (strcmp(tokens[COMMAND_TOKEN].value, "gets") == 0)) {
 
@@ -3013,7 +3008,7 @@ static enum try_read_result try_read_udp(conn *c) {
  */
 static enum try_read_result try_read_network(conn *c) {
     enum try_read_result gotdata = READ_NO_DATA_RECEIVED;
-    int res, avail;
+    int res;
 
     assert(c != NULL);
 
@@ -3038,7 +3033,7 @@ static enum try_read_result try_read_network(conn *c) {
             c->rsize *= 2;
         }
 
-        avail = c->rsize - c->rbytes;
+        int avail = c->rsize - c->rbytes;
         res = read(c->sfd, c->rbuf + c->rbytes, avail);
         if (res > 0) {
             pthread_mutex_lock(&c->thread->stats.mutex);
@@ -3066,11 +3061,9 @@ static enum try_read_result try_read_network(conn *c) {
 }
 
 static bool update_event(conn *c, const int new_flags) {
-    struct event_base *base;
-
     assert(c != NULL);
 
-    base = c->event.ev_base;
+    struct event_base *base = c->event.ev_base;
     if (c->ev_flags == new_flags)
         return true;
     if (event_del(&c->event) == -1) return false;
@@ -3738,11 +3731,9 @@ static void set_current_time(void) {
 }
 
 static void clock_handler(const int fd, const short which, void *arg) {
-    struct timeval t;
+    struct timeval t = {.tv_sec = 1, .tv_usec = 0};
     static bool initialized = false;
 
-    t.tv_sec = 1;
-    t.tv_usec = 0;
     if (initialized) {
         /* only delete the event if it's actually there. */
         evtimer_del(&clockevent);
@@ -3767,11 +3758,11 @@ static void usage(void) {
 #ifndef WIN32
            "-d            run as a daemon\n"
 #else /* !WIN32 */
-           "-d start      tell memcached to start\n"
-           "-d restart    tell running memcached to do a graceful restart\n"
+           "-d start        tell memcached to start\n"
+           "-d restart      tell running memcached to do a graceful restart\n"
            "-d stop/shutdown    tell running memcached to shutdown\n"
-           "-d install    install memcached service\n"
-           "-d unindstall uninstall memcached service\n"
+           "-d install        install memcached service\n"
+           "-d unindstall    uninstall memcached service\n"
 #endif /* WIN32 */
            "-r            maximize core file limit\n"
            "-u <username> assume identity of <username> (only when run as root)\n"
@@ -4019,15 +4010,9 @@ int main (int argc, char **argv) {
     /* handle SIGINT */
     signal(SIGINT, sig_handler);
 #else /* !WIN32 */
-    extern int ptw32_processInitialize();
     WSADATA wsaData;
-
     if (WSAStartup(MAKEWORD(2,0), &wsaData) != 0) {
         fprintf(stderr, "Socket Initialization Error. Program aborted\n");
-        return;
-    }
-    if (PTW32_TRUE != ptw32_processInitialize()) {
-        fprintf(stderr, "Pthread Library Initialization Error. Program aborted\n");
         return;
     }
 #endif /* WIN32 */
@@ -4065,8 +4050,8 @@ int main (int argc, char **argv) {
           "D:"  /* prefix delimiter? */
           "L"   /* Large memory pages */
           "R:"  /* max requests per event */
-          "C"   /* Disable use of CAS */
-          "b:"  /* backlog queue limit */
+          "C"  /* Disable use of CAS */
+          "b:"   /* backlog queue limit */
         ))) {
         switch (c) {
         case 'a':
@@ -4360,11 +4345,7 @@ int main (int argc, char **argv) {
     /* create the listening socket, bind it, and init */
     if (settings.socketpath == NULL) {
         int udp_port;
-#ifndef WIN32
         errno = 0;
-#else /* !WIN32 */
-    _set_errno(0);
-#endif /* WIN32 */
         if (settings.port && server_socket(settings.port, negotiating_prot)) {
             fprintf(stderr, "failed to listen on TCP port %d\n", settings.port);
             if (errno != 0)
@@ -4381,11 +4362,7 @@ int main (int argc, char **argv) {
         udp_port = settings.udpport ? settings.udpport : settings.port;
 
         /* create the UDP listening socket and bind it */
-#ifndef WIN32
         errno = 0;
-#else /* !WIN32 */
-    _set_errno(0);
-#endif /* WIN32 */
         if (settings.udpport && server_socket(settings.udpport, ascii_udp_prot)) {
             fprintf(stderr, "failed to listen on UDP port %d\n", settings.udpport);
             if (errno != 0)

@@ -5,57 +5,45 @@
 #ifndef WIN32_H
 #define WIN32_H
 
+#define _WIN32_WINNT    0x0501        /* Needed to resolve getaddrinfo et al. */
 #include <stdio.h>
 #include <io.h>
 #include <time.h>
 #include <fcntl.h>
 #include <Winsock2.h>
 #include <errno.h>
+#include <stdint.h>
 #include <process.h>
 
 #pragma warning(disable : 4996)
 
-#if defined(_MSC_VER)
-// for MSVC 6.0
-typedef          __int64    int64_t;
-typedef unsigned __int64   uint64_t;
-typedef          int        int32_t;
-typedef unsigned int       uint32_t;
-typedef          short      int16_t;
-typedef unsigned short     uint16_t;
-typedef          char        int8_t;
-typedef unsigned char       uint8_t;
-typedef char *caddr_t;
-#define inline __inline
-#endif // _WIN32 && _MSC_VER
-//#define pid_t int
 #define EWOULDBLOCK        EAGAIN
 #define EAFNOSUPPORT       47
-#define EADDRINUSE			WSAEADDRINUSE
-#define EAI_SYSTEM			-11
+#define EADDRINUSE         WSAEADDRINUSE
+#define EAI_SYSTEM         -11
 typedef int socklen_t;
-typedef int ssize_t;
+typedef char *caddr_t;
 
 #define O_BLOCK 0
 #define O_NONBLOCK 1
 #define F_GETFL 3
 #define F_SETFL 4
 
-#define RUSAGE_SELF	0
+#define RUSAGE_SELF    0
 
 #define IOV_MAX 1024
 struct iovec {
-	u_long iov_len;  
-	char FAR* iov_base;
+    u_long iov_len;  
+    char FAR* iov_base;
 };
-struct msghdr
-{
-	void	*msg_name;			/* Socket name			*/
-	int		 msg_namelen;		/* Length of name		*/
-	struct iovec *msg_iov;		/* Data blocks			*/
-	int		 msg_iovlen;		/* Number of blocks		*/
-	void	*msg_accrights;		/* Per protocol magic (eg BSD file descriptor passing) */ 
-	int		 msg_accrightslen;	/* Length of rights list */
+
+struct msghdr {
+    void         *msg_name;         /* Socket name            */
+    int          msg_namelen;       /* Length of name        */
+    struct iovec *msg_iov;          /* Data blocks            */
+    int          msg_iovlen;        /* Number of blocks        */
+    void         *msg_accrights;    /* Per protocol magic (eg BSD file descriptor passing) */ 
+    int          msg_accrightslen;  /* Length of rights list */
 };
 
 #if defined(_MSC_VER) || defined(_MSC_EXTENSIONS)
@@ -64,16 +52,14 @@ struct msghdr
   #define DELTA_EPOCH_IN_MICROSECS  11644473600000000ULL
 #endif
 
-struct timezone
-{
-  int  tz_minuteswest; /* minutes W of Greenwich */
-  int  tz_dsttime;     /* type of dst correction */
+struct timezone {
+    int  tz_minuteswest; /* minutes W of Greenwich */
+    int  tz_dsttime;     /* type of dst correction */
 };
 
 
 /* Structure which says how much of each resource has been used.  */
-struct rusage
-  {
+struct rusage {
     /* Total amount of user time used.  */
     struct timeval ru_utime;
     /* Total amount of system time used.  */
@@ -112,121 +98,101 @@ struct rusage
     /* Number of involuntary context switches, i.e. a higher priority process
        became runnable or the current process used up its time slice.  */
     long int ru_nivcsw;
-  };
+};
 
 int fcntl(SOCKET s, int cmd, int val);
 int inet_aton(register const char *cp, struct in_addr *addr);
 
 #define close(s) closesocket(s)
 
-/*
-inline int inet_pton(int af, register const char *cp, struct in_addr *addr)
-{
-    if(af != AF_INET) {
-		WSASetLastError(WSAEPFNOSUPPORT);
-		return -1;
+static inline void mapErr(int error) {
+    switch(error) {
+        default:
+            break;
+        case WSAEPFNOSUPPORT:
+            errno = EAFNOSUPPORT;
+            break;
+        case WSA_IO_PENDING:
+        case WSATRY_AGAIN:
+            errno = EAGAIN;
+            break;
+        case WSAEWOULDBLOCK:
+            errno = EWOULDBLOCK;
+            break;
+        case WSAEMSGSIZE:
+            errno = E2BIG;
+            break;
+        case WSAECONNRESET:
+            errno = 0;
+            break;
     }
-    return inet_aton(cp, addr);
 }
-*/
 
 #define write mem_write
 
-inline size_t mem_write(int s, void *buf, size_t len)
+static inline size_t mem_write(int s, void *buf, size_t len)
 {
-	DWORD dwBufferCount = 0;
-	WSABUF wsabuf = { len, (char *)buf} ;
-	if(WSASend(s, &wsabuf, 1, &dwBufferCount, 0, NULL, NULL) == 0) {
-		return dwBufferCount;
-	}
-	if(WSAGetLastError() == WSAECONNRESET) return 0;
-	return -1;
+    DWORD dwBufferCount = 0;
+    int error;
+
+    WSABUF wsabuf = { len, (char *)buf} ;
+    if(WSASend(s, &wsabuf, 1, &dwBufferCount, 0, NULL, NULL) == 0) {
+        return dwBufferCount;
+    }
+        error = WSAGetLastError();
+    if(error == WSAECONNRESET) return 0;
+        mapErr(error);
+    return -1;
 }
 
 #define read mem_read
 
-inline size_t mem_read(int s, void *buf, size_t len)
+static inline size_t mem_read(int s, void *buf, size_t len)
 {
-	DWORD flags = 0;
-	DWORD dwBufferCount;
-	WSABUF wsabuf = { len, (char *)buf };
-	if(WSARecv((SOCKET)s, 
-		&wsabuf, 
-		1, 
-		&dwBufferCount, 
-		&flags, 
-		NULL, 
-		NULL
-	) == 0) {
-		return dwBufferCount;
-	}
-	if(WSAGetLastError() == WSAECONNRESET) return 0;
-	return -1;
+    DWORD flags = 0;
+    DWORD dwBufferCount;
+    WSABUF wsabuf = { len, (char *)buf };
+        int error;
+
+    if(WSARecv((SOCKET)s, 
+        &wsabuf, 
+        1, 
+        &dwBufferCount, 
+        &flags, 
+        NULL, 
+        NULL
+    ) == 0) {
+        return dwBufferCount;
+    }
+    error = WSAGetLastError();
+        if (error == WSAECONNRESET) return 0;
+        mapErr(error);
+    return -1;
 }
 
-inline int sendmsg(int s, const struct msghdr *msg, int flags)
+static inline int sendmsg(int s, const struct msghdr *msg, int flags)
 {
-	DWORD dwBufferCount;
-	if(WSASendTo((SOCKET) s,
-		(LPWSABUF)msg->msg_iov,
-		(DWORD)msg->msg_iovlen,
-		&dwBufferCount,
-		flags,
-		msg->msg_name,
-		msg->msg_namelen,
-		NULL,
-		NULL
-	) == 0) {
-		return dwBufferCount;
-	}
-	if(WSAGetLastError() == WSAECONNRESET) return 0;
-	return -1;
+    DWORD dwBufferCount;
+        int error;
+
+    if(WSASendTo((SOCKET) s,
+        (LPWSABUF)msg->msg_iov,
+        (DWORD)msg->msg_iovlen,
+        &dwBufferCount,
+        flags,
+        msg->msg_name,
+        msg->msg_namelen,
+        NULL,
+        NULL
+    ) == 0) {
+        return dwBufferCount;
+    }
+    error = WSAGetLastError();
+        if (error == WSAECONNRESET) return 0;
+        mapErr(error);
+    return -1;
 }
 
-#undef errno
-#define errno werrno()
-inline int werrno()
-{
-	int error = WSAGetLastError();
-	if(error == 0) error = *_errno();
-
-	switch(error) {
-		default:
-			return error;
-		case WSAEPFNOSUPPORT:
-			_set_errno(EAFNOSUPPORT);
-			return EAFNOSUPPORT;
-		case WSA_IO_PENDING:
-		case WSATRY_AGAIN:
-			_set_errno(EAGAIN);
-			return EAGAIN;
-		case WSAEWOULDBLOCK:
-			_set_errno(EWOULDBLOCK);
-			return EWOULDBLOCK;
-		case WSAEMSGSIZE:
-			_set_errno(E2BIG);
-			return E2BIG;
-		case WSAECONNRESET:
-			_set_errno(0);
-			return 0;
-	}
-}
-
-#if _MSC_VER < 1300
-#define strtoll(p, e, b) ((*(e) = (char*)(p) + (((b) == 10) ? strspn((p), "0123456789") : 0)), _atoi64(p))
-#else
-#define strtoll(p, e, b) _strtoi64(p, e, b) 
-#endif
-
-
-#ifndef snprintf
-#define snprintf _snprintf
-#endif
-
-// The next three lines commented out and replaced with the single following declaration. Ashok Ambati - 04/03/2008
-//#ifndef strtoull
-//#define strtoull strtoul
-//#endif
 unsigned __int64 strtoull(const char *p,char **pend,int base);
 
 int createLocalListSock(struct sockaddr_in *saddr);
@@ -235,4 +201,5 @@ int getrusage(int who, struct rusage *usage);
 int gettimeofday(struct timeval *timer, struct timezone *tz);
 int kill(int pid, int sig);
 int sleep(int seconds);
+
 #endif

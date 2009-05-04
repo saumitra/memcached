@@ -13,8 +13,8 @@
 #include <sys/socket.h>
 #include <sys/signal.h>
 #include <sys/resource.h>
-#include <netinet/in.h>
 #include <fcntl.h>
+#include <netinet/in.h>
 #endif /* !WIN32 */
 #include <errno.h>
 #include <stdlib.h>
@@ -277,7 +277,7 @@ static void do_slabs_free(void *ptr, const size_t size, unsigned int id) {
 
     assert(((item *)ptr)->slabs_clsid == 0);
     assert(id >= POWER_SMALLEST && id <= power_largest);
-    if (id < (unsigned)POWER_SMALLEST || id > (unsigned)power_largest)
+    if (id < POWER_SMALLEST || id > power_largest)
         return;
 
     MEMCACHED_SLABS_FREE(size, id, ptr);
@@ -345,12 +345,13 @@ static void do_slabs_stats(ADD_STAT add_stats, void *c) {
         slabclass_t *p = &slabclass[i];
         if (p->slabs != 0) {
             uint32_t perslab, slabs;
+            slabs = p->slabs;
+            perslab = p->perslab;
+
             char key_str[128];
             char val_str[128];
             int klen = 0, vlen = 0;
 
-            slabs = p->slabs;
-            perslab = p->perslab;
             APPEND_NUM_STAT(i, "chunk_size", "%u", p->size);
             APPEND_NUM_STAT(i, "chunks_per_page", "%u", perslab);
             APPEND_NUM_STAT(i, "total_pages", "%u", slabs);

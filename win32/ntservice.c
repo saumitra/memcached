@@ -89,7 +89,7 @@ void WINAPI ServiceControlHandler(DWORD controlCode)
 
 void WINAPI ServiceMain(DWORD dwNumServicesArgs, LPSTR *lpServiceArgVectors)
 {
-    // initialise service status
+    /* initialise service status */
     serviceStatus.dwServiceType = SERVICE_WIN32;
     serviceStatus.dwCurrentState = SERVICE_STOPPED;
     serviceStatus.dwControlsAccepted = 0;
