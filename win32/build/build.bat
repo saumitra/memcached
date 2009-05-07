@@ -26,6 +26,12 @@
 )
 )
 
+@mingw32-make -version
+@if errorlevel 1 (
+@echo "ERROR: mingw32-make not in PATH. Is MingW installed? Exiting..."
+@goto end
+)
+
 @cd %BLD_TYPE%
 @if not exist t mkdir t
 @cd t
