@@ -118,9 +118,7 @@ static void test_issue_44(void) {
     fclose(fp);
     pid_t pid = atol(buffer);
     assert(kill(pid, 0) == 0);
-#ifndef WIN32
     assert(kill(pid, SIGHUP) == 0);
-#endif
     sleep(1);
     assert(kill(pid, 0) == 0);
     assert(kill(pid, SIGTERM) == 0);

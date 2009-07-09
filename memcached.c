@@ -15,14 +15,13 @@
  */
 #include "memcached.h"
 #include <sys/stat.h>
-#include <ctype.h>
-#include <stdarg.h>
-#ifndef WIN32
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <signal.h>
 #include <sys/resource.h>
 #include <sys/uio.h>
+#include <ctype.h>
+#include <stdarg.h>
 
 /* some POSIX systems need the following definition
  * to get mlockall flags out of sys/mman.h.  */
@@ -39,14 +38,6 @@
 #include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <errno.h>
-#else /* !WIN32 */
-#include "win32/config.h"
-#include <Winsock2.h>
-#include <ws2tcpip.h>
-#include <process.h>
-#include "win32/ntservice.h"
-#include "win32/bsd_getopt.h"
-#endif /* WIN32 */
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -2145,8 +2136,10 @@ static void server_stats(ADD_STAT add_stats, conn *c) {
     struct slab_stats slab_stats;
     slab_stats_aggregate(&thread_stats, &slab_stats);
 
+#ifndef WIN32
     struct rusage usage;
     getrusage(RUSAGE_SELF, &usage);
+#endif /* !WIN32 */
 
     STATS_LOCK();
 
@@ -2156,12 +2149,14 @@ static void server_stats(ADD_STAT add_stats, conn *c) {
     APPEND_STAT("version", "%s", VERSION);
     APPEND_STAT("pointer_size", "%d", (int)(8 * sizeof(void *)));
 
+#ifndef WIN32
     append_stat("rusage_user", add_stats, c, "%ld.%06ld",
                 (long)usage.ru_utime.tv_sec,
                 (long)usage.ru_utime.tv_usec);
     append_stat("rusage_system", add_stats, c, "%ld.%06ld",
                 (long)usage.ru_stime.tv_sec,
                 (long)usage.ru_stime.tv_usec);
+#endif /* !WIN32 */
 
     APPEND_STAT("curr_connections", "%u", stats.curr_conns - 1);
     APPEND_STAT("total_connections", "%u", stats.total_conns);
@@ -2744,11 +2739,11 @@ static void process_command(conn *c, char *command) {
 
     } else if ((ntokens == 7 || ntokens == 8) && (strcmp(tokens[COMMAND_TOKEN].value, "cas") == 0 && (comm = NREAD_CAS))) {
 
-        process_update_command(c, tokens, ntokens, comm, 1);
+        process_update_command(c, tokens, ntokens, comm, true);
 
     } else if ((ntokens == 4 || ntokens == 5) && (strcmp(tokens[COMMAND_TOKEN].value, "incr") == 0)) {
 
-        process_arithmetic_command(c, tokens, ntokens, true);
+        process_arithmetic_command(c, tokens, ntokens, 1);
 
     } else if (ntokens >= 3 && (strcmp(tokens[COMMAND_TOKEN].value, "gets") == 0)) {
 
@@ -3632,7 +3627,6 @@ static int server_socket(const int port, enum protocol prot) {
     return success == 0;
 }
 
-#ifndef WIN32
 static int new_socket_unix(void) {
     int sfd;
     int flags;
@@ -3709,7 +3703,6 @@ static int server_socket_unix(const char *path, int access_mask) {
 
     return 0;
 }
-#endif /* WIN32 */
 
 /*
  * We keep the current time of day in a global variable that's updated by a
@@ -3755,15 +3748,7 @@ static void usage(void) {
            "-s <file>     unix socket path to listen on (disables network support)\n"
            "-a <mask>     access mask for unix socket, in octal (default 0700)\n"
            "-l <ip_addr>  interface to listen on, default is INADDR_ANY\n"
-#ifndef WIN32
            "-d            run as a daemon\n"
-#else /* !WIN32 */
-           "-d start        tell memcached to start\n"
-           "-d restart      tell running memcached to do a graceful restart\n"
-           "-d stop/shutdown    tell running memcached to shutdown\n"
-           "-d install        install memcached service\n"
-           "-d unindstall    uninstall memcached service\n"
-#endif /* WIN32 */
            "-r            maximize core file limit\n"
            "-u <username> assume identity of <username> (only when run as root)\n"
            "-m <num>      max memory to use for items in megabytes, default is 64 MB\n"
@@ -3905,32 +3890,11 @@ static void remove_pidfile(const char *pid_file) {
 
 }
 
-#ifdef WIN32
-void run_server() {
-    /* Enter the loop */
-    event_loop(0);
-}
-
-void stop_server() {
-    /* Exit the loop */
-    event_loopexit(NULL);
-}
-
-void pause_server() {
-    /* NOT IMPLEMENTED YET */
-}
-
-void continue_server() {
-    /* NOT IMPLEMENTED YET */
-}
-#endif /* WIN32 */
-
 static void sig_handler(const int sig) {
     printf("SIGINT handled.\n");
     exit(EXIT_SUCCESS);
 }
 
-#ifndef WIN32
 #ifndef HAVE_SIGIGNORE
 static int sigignore(int sig) {
     struct sigaction sa = { .sa_handler = SIG_IGN, .sa_flags = 0 };
@@ -3940,7 +3904,6 @@ static int sigignore(int sig) {
     }
     return 0;
 }
-#endif
 #endif
 
 
@@ -3988,34 +3951,21 @@ static int enable_large_pages(void) {
 int main (int argc, char **argv) {
     int c;
     bool lock_memory = false;
-#ifndef WIN32
     bool do_daemonize = false;
-#else /* !WIN32 */
-    int do_daemonize = 0;
-#endif /* WIN32 */
     bool preallocate = false;
     int maxcore = 0;
     char *username = NULL;
     char *pid_file = NULL;
+    struct passwd *pw;
+    struct rlimit rlim;
     /* listening sockets */
     static int *l_socket = NULL;
 
     /* udp socket */
     static int *u_socket = NULL;
 
-#ifndef WIN32
-    struct passwd *pw;
-    struct rlimit rlim;
-
     /* handle SIGINT */
     signal(SIGINT, sig_handler);
-#else /* !WIN32 */
-    WSADATA wsaData;
-    if (WSAStartup(MAKEWORD(2,0), &wsaData) != 0) {
-        fprintf(stderr, "Socket Initialization Error. Program aborted\n");
-        return;
-    }
-#endif /* WIN32 */
 
     /* init settings */
     settings_init();
@@ -4036,11 +3986,7 @@ int main (int argc, char **argv) {
           "hi"  /* help, licence info */
           "r"   /* maximize core file limit */
           "v"   /* verbose */
-#ifdef WIN32
-          "d:"  /* Windows Service subcommands */
-#else
           "d"   /* daemon mode */
-#endif
           "l:"  /* interface to listen on */
           "u:"  /* user identity to run as */
           "P:"  /* save PID in file */
@@ -4050,8 +3996,8 @@ int main (int argc, char **argv) {
           "D:"  /* prefix delimiter? */
           "L"   /* Large memory pages */
           "R:"  /* max requests per event */
-          "C"  /* Disable use of CAS */
-          "b:"   /* backlog queue limit */
+          "C"   /* Disable use of CAS */
+          "b:"  /* backlog queue limit */
         ))) {
         switch (c) {
         case 'a':
@@ -4094,16 +4040,6 @@ int main (int argc, char **argv) {
             break;
         case 'd':
             do_daemonize = true;
-#ifdef WIN32
-            if (!optarg || !strcmpi(optarg, "runservice")) do_daemonize = 1;
-            else if (!strcmpi(optarg, "start")) do_daemonize = 2;
-            else if (!strcmpi(optarg, "restart")) do_daemonize = 3;
-            else if (!strcmpi(optarg, "stop")) do_daemonize = 4;
-            else if (!strcmpi(optarg, "shutdown")) do_daemonize = 5;
-            else if (!strcmpi(optarg, "install")) do_daemonize = 6;
-            else if (!strcmpi(optarg, "uninstall")) do_daemonize = 7;
-            else fprintf(stderr, "Illegal argument: \"%s\"\n", optarg);
-#endif /* WIN32 */
             break;
         case 'r':
             maxcore = 1;
@@ -4169,7 +4105,6 @@ int main (int argc, char **argv) {
         }
     }
 
-#ifndef WIN32
     if (maxcore != 0) {
         struct rlimit rlim_new;
         /*
@@ -4243,41 +4178,6 @@ int main (int argc, char **argv) {
             exit(EXIT_FAILURE);
         }
     }
-#else /* !WIN32 */
-    switch(do_daemonize) {
-        case 2:
-            if(!ServiceStart()) {
-                fprintf(stderr, "failed to start service\n");
-                return 1;
-            }
-            exit(0);
-        case 3:
-            if (!ServiceRestart()) {
-                fprintf(stderr,"failed to restart service\n");
-                return 1;
-            }
-            exit(0);
-        case 4:
-        case 5:
-            if (!ServiceStop()) {
-                fprintf(stderr, "failed to stop service\n");
-                return 1;
-            }
-            exit(0);
-        case 6:
-            if (!ServiceInstall()) {
-                fprintf(stderr, "failed to install service or service already installed\n");
-                return 1;
-            }
-            exit(0);
-        case 7:
-            if (!ServiceUninstall()) {
-                fprintf(stderr, "failed to uninstall service or service not installed\n");
-                return 1;
-            }
-            exit(0);
-        }
-#endif /* WIN32 */
 
     /* lock paged memory if needed */
     if (lock_memory) {
@@ -4304,7 +4204,6 @@ int main (int argc, char **argv) {
     suffix_init();
     slabs_init(settings.maxbytes, settings.factor, preallocate);
 
-#ifndef WIN32
     /*
      * ignore SIGPIPE signals; we can use errno == EPIPE if we
      * need that information
@@ -4313,7 +4212,6 @@ int main (int argc, char **argv) {
         perror("failed to ignore SIGPIPE; sigaction");
         exit(EX_OSERR);
     }
-#endif /* !WIN32 */
     /* start up worker threads if MT mode */
     thread_init(settings.num_threads, main_base);
     /* save the PID in if we're a daemon, do this after thread_init due to
@@ -4328,7 +4226,6 @@ int main (int argc, char **argv) {
     /* initialise clock event */
     clock_handler(0, 0, 0);
 
-#ifndef WIN32
     /* create unix mode sockets after dropping privileges */
     if (settings.socketpath != NULL) {
         errno = 0;
@@ -4340,7 +4237,6 @@ int main (int argc, char **argv) {
           exit(EX_OSERR);
         }
     }
-#endif /* !WIN32 */
 
     /* create the listening socket, bind it, and init */
     if (settings.socketpath == NULL) {
@@ -4370,12 +4266,6 @@ int main (int argc, char **argv) {
             exit(EX_OSERR);
         }
     }
-#ifdef WIN32
-    if (do_daemonize) {
-        ServiceSetFunc(run_server, pause_server, continue_server, stop_server);
-        ServiceRun();
-    } else
-#endif /* WIN32 */
 
     /* Drop privileges no longer needed */
     drop_privileges();

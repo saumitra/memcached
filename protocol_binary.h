@@ -35,9 +35,7 @@
 #ifndef PROTOCOL_BINARY_H
 #define PROTOCOL_BINARY_H
 
-#ifndef WIN32
 #include <stdint.h>
-#endif
 
 /**
  * This file contains definitions of the constants and packet formats

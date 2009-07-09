@@ -5,18 +5,13 @@
 #endif
 
 #include <sys/types.h>
-#ifndef WIN32
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <netinet/in.h>
 #include <event.h>
 #include <netdb.h>
-#include <stdint.h>
-#else /* !WIN32 */
-#include "win32.h"
-#include "event.h"
-#endif /* WIN32 */
 #include <stdbool.h>
+#include <stdint.h>
 #include <pthread.h>
 
 #include "protocol_binary.h"
