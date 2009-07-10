@@ -2136,10 +2136,8 @@ static void server_stats(ADD_STAT add_stats, conn *c) {
     struct slab_stats slab_stats;
     slab_stats_aggregate(&thread_stats, &slab_stats);
 
-#ifndef WIN32
     struct rusage usage;
     getrusage(RUSAGE_SELF, &usage);
-#endif /* !WIN32 */
 
     STATS_LOCK();
 
@@ -2149,14 +2147,12 @@ static void server_stats(ADD_STAT add_stats, conn *c) {
     APPEND_STAT("version", "%s", VERSION);
     APPEND_STAT("pointer_size", "%d", (int)(8 * sizeof(void *)));
 
-#ifndef WIN32
     append_stat("rusage_user", add_stats, c, "%ld.%06ld",
                 (long)usage.ru_utime.tv_sec,
                 (long)usage.ru_utime.tv_usec);
     append_stat("rusage_system", add_stats, c, "%ld.%06ld",
                 (long)usage.ru_stime.tv_sec,
                 (long)usage.ru_stime.tv_usec);
-#endif /* !WIN32 */
 
     APPEND_STAT("curr_connections", "%u", stats.curr_conns - 1);
     APPEND_STAT("total_connections", "%u", stats.total_conns);

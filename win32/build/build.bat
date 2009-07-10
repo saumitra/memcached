@@ -9,12 +9,12 @@
 
 @set BLD_TYPE="%3"
 
-@if %EVENT_LOC% == "" (
+@if "%EVENT_LOC%" == "" (
 @echo "Usage: build.bat <pathname for libevent> <pathname for pthread> DEBUG|RELEASE"
 @goto end
 )
 
-@if %PTHREAD_LOC% == "" (
+@if "%PTHREAD_LOC%" == "" (
 @echo "Usage: build.bat <pathname for libevent> <pathname for pthread> DEBUG|RELEASE"
 @goto end
 )
